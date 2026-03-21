@@ -19,7 +19,7 @@ const AGENTS = [
 
 if (!PK) { console.error('Set PRIVATE_KEY env var'); process.exit(1) }
 
-const provider = new ethers.JsonRpcProvider(RPC_URL)
+const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, { batchMaxCount: 1 })
 const funder   = new ethers.Wallet(PK, provider)
 
 const bal = await provider.getBalance(funder.address)
@@ -27,12 +27,12 @@ console.log(`Funder: ${funder.address}`)
 console.log(`Balance: ${ethers.formatEther(bal)} ETH\n`)
 
 for (const agent of AGENTS) {
-  const agentBal = await provider.getBalance(agent.address)
-  if (agentBal >= AMOUNT) {
-    console.log(`✅ ${agent.name} already funded (${ethers.formatEther(agentBal)} ETH)`)
-    continue
-  }
   try {
+    const agentBal = await provider.getBalance(agent.address)
+    if (agentBal >= AMOUNT) {
+      console.log(`✅ ${agent.name} already funded (${ethers.formatEther(agentBal)} ETH)`)
+      continue
+    }
     const tx = await funder.sendTransaction({ to: agent.address, value: AMOUNT })
     await tx.wait()
     console.log(`✅ Funded ${agent.name}: ${tx.hash}`)
