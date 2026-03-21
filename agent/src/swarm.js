@@ -28,11 +28,19 @@ export class SwarmCoordinator {
   }
 
   addAgent(name, address, wallet) {
-    const agent = { name, address, reputation: 1000, wallet, joinedAt: Date.now() }
+    const PERSONALITY_LABELS = {
+      Alpha: { label: 'Aggressive Growth', emoji: '🚀' },
+      Beta:  { label: 'Yield Optimizer',   emoji: '📈' },
+      Gamma: { label: 'Risk Manager',      emoji: '🛡️' },
+      Delta: { label: 'Diversifier',       emoji: '⚖️' },
+      Epsilon:{ label: 'Conservative',     emoji: '🏦' },
+    }
+    const p = PERSONALITY_LABELS[name] || { label: 'Agent', emoji: '🤖' }
+    const agent = { name, address, reputation: 1000, wallet, joinedAt: Date.now(), ...p }
     this.agents.set(name, agent)
     this.brains.set(name, new AgentBrain(agent, this))
     this._emit('agent_joined', { name, address })
-    console.log(`✅ Agent ${name} joined swarm at ${address}`)
+    console.log(`✅ Agent ${name} (${p.label}) joined swarm at ${address}`)
   }
 
   agentIndex(name) {
@@ -74,9 +82,9 @@ export class SwarmCoordinator {
     const writer = this.vault.writer(proposerName)
     if (!writer) return
     try {
-      const PTYPE = { Transfer: 0, Rebalance: 1, AgentSlash: 2, ParamChange: 3 }
+      // Always use Rebalance (type 1) for on-chain record — no token validation required
       const tx = await writer.propose(
-        PTYPE[p.type] ?? 1,
+        1, // Rebalance
         p.description,
         '0x0000000000000000000000000000000000000000',
         '0x0000000000000000000000000000000000000000',
@@ -84,12 +92,14 @@ export class SwarmCoordinator {
         '0x'
       )
       const receipt = await tx.wait()
-      p.txHash    = receipt.hash
-      p.onChainId = Number(receipt.logs?.[0]?.topics?.[1] ?? 0)
+      p.txHash = receipt.hash
+      // Parse ProposalCreated event to get on-chain ID
+      const log = receipt.logs?.find(l => l.topics?.[0]?.startsWith('0x'))
+      p.onChainId = log ? Number(BigInt(log.topics[1] ?? '0x0')) : null
       this._emit('proposal_onchain', { id: p.id, txHash: p.txHash, onChainId: p.onChainId })
-      console.log(`📜 Proposal #${p.id} on-chain tx: ${receipt.hash}`)
+      console.log(`📜 Proposal #${p.id} on-chain: ${receipt.hash}`)
     } catch (err) {
-      console.warn(`[onChainPropose] ${err.message?.slice(0, 80)}`)
+      console.warn(`[onChainPropose] ${err.shortMessage || err.message?.slice(0, 80)}`)
     }
   }
 
@@ -222,7 +232,8 @@ export class SwarmCoordinator {
       network:         this.network,
       chainId:         this.chainId,
       agents:    [...this.agents.values()].map(a => ({
-        name: a.name, address: a.address, reputation: a.reputation, joinedAt: a.joinedAt,
+        name: a.name, address: a.address, reputation: a.reputation,
+        joinedAt: a.joinedAt, label: a.label, emoji: a.emoji,
       })),
       proposals: [...this.proposals.values()].map(p => ({
         id: p.id, proposer: p.proposer, type: p.type, description: p.description,

@@ -24,9 +24,9 @@ const ABI = [
 export class VaultContract {
   constructor(address, rpcUrl) {
     this.address  = address
-    this.provider = new ethers.JsonRpcProvider(rpcUrl)
-    this._readers = new Map()  // agentName → read-only contract
-    this._writers = new Map()  // agentName → signer contract
+    this.provider = new ethers.JsonRpcProvider(rpcUrl, 11155111, { staticNetwork: true, batchMaxCount: 1 })
+    this._readers = new Map()
+    this._writers = new Map()
   }
 
   /**

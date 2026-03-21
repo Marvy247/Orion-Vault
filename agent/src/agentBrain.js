@@ -1,47 +1,84 @@
 /**
  * AgentBrain – autonomous reasoning loop for one swarm agent.
- *
- * Each agent independently:
- *   1. Observes market signals (price, volatility, treasury state)
- *   2. Generates a capital allocation strategy
- *   3. Proposes it to the swarm
- *   4. Votes on other agents' proposals based on its own analysis
- *
- * No LLM dependency – uses deterministic heuristics so the demo
- * runs fully offline. The architecture is LLM-ready (swap the
- * strategy() method for an OpenAI/Anthropic call).
+ * Each agent has a distinct personality that shapes its strategy
+ * and voting behaviour, making the swarm visibly diverse.
  */
 
-const STRATEGIES = [
-  { type: 'Rebalance',  desc: 'Rebalance 30% treasury to yield-bearing positions' },
-  { type: 'Transfer',   desc: 'Allocate 10% to liquidity reserve wallet' },
-  { type: 'Rebalance',  desc: 'Hedge 20% into XAU₮ for volatility protection' },
-  { type: 'Transfer',   desc: 'Deploy 15% to Aave lending for yield generation' },
-  { type: 'Rebalance',  desc: 'Consolidate dust positions, rebalance to USDT' },
-  { type: 'Transfer',   desc: 'Distribute 5% performance bonus to top agents' },
-]
+const PERSONALITIES = {
+  Alpha: {
+    label:      'Aggressive Growth',
+    emoji:      '🚀',
+    riskTolerance: 0.8,   // high — will propose large allocations
+    strategies: [
+      'Deploy 25% to high-yield DeFi positions for maximum returns',
+      'Allocate 30% to leveraged ETH exposure via Aave',
+      'Concentrate 20% into emerging yield opportunities',
+      'Aggressive rebalance: move 35% from idle USDT to yield farms',
+    ],
+  },
+  Beta: {
+    label:      'Yield Optimizer',
+    emoji:      '📈',
+    riskTolerance: 0.5,
+    strategies: [
+      'Deploy 15% to Aave lending for steady yield generation',
+      'Optimize 10% into stablecoin yield strategies',
+      'Rebalance 12% to highest-APY lending pools',
+      'Allocate 8% to diversified yield positions',
+    ],
+  },
+  Gamma: {
+    label:      'Risk Manager',
+    emoji:      '🛡️',
+    riskTolerance: 0.3,
+    strategies: [
+      'Hedge 20% into XAU₮ for volatility protection',
+      'Reduce exposure: move 15% to stable reserves',
+      'Defensive rebalance: increase USDT buffer by 10%',
+      'Allocate 5% to XAU₮ as inflation hedge',
+    ],
+  },
+  Delta: {
+    label:      'Diversifier',
+    emoji:      '⚖️',
+    riskTolerance: 0.5,
+    strategies: [
+      'Diversify 10% across three lending protocols',
+      'Rebalance portfolio: equal-weight across ETH, BTC, USDT',
+      'Spread 15% across multiple yield strategies',
+      'Allocate 8% to cross-chain opportunities via bridge',
+    ],
+  },
+  Epsilon: {
+    label:      'Conservative',
+    emoji:      '🏦',
+    riskTolerance: 0.2,
+    strategies: [
+      'Preserve capital: keep 90% in USDT, deploy only 5%',
+      'Low-risk allocation: 8% to Aave stable lending only',
+      'Minimal exposure: 5% to blue-chip yield, rest in reserve',
+      'Safety-first: consolidate positions, reduce risk by 10%',
+    ],
+  },
+}
 
 export class AgentBrain {
   constructor(agent, swarm) {
-    this.agent  = agent   // { name, address, reputation }
-    this.swarm  = swarm   // SwarmCoordinator reference
-    this.log    = []
-    this._cycle = 0
+    this.agent       = agent
+    this.swarm       = swarm
+    this.personality = PERSONALITIES[agent.name] || PERSONALITIES.Beta
+    this.log         = []
+    this._cycle      = 0
   }
 
-  /**
-   * One autonomous reasoning cycle.
-   * Returns an event object describing what the agent decided.
-   */
   async tick(marketData, treasuryState) {
     this._cycle++
     const events = []
 
-    // 1. Analyse market
     const analysis = this._analyse(marketData, treasuryState)
     events.push({ type: 'analysis', agent: this.agent.name, data: analysis })
 
-    // 2. Maybe propose (every 3rd cycle, staggered by agent index)
+    // Stagger proposals by agent index so they don't all propose at once
     const agentIdx = this.swarm.agentIndex(this.agent.name)
     if (this._cycle % 3 === agentIdx % 3) {
       const proposal = this._generateProposal(analysis, treasuryState)
@@ -50,75 +87,74 @@ export class AgentBrain {
       this._log(`Proposed: ${proposal.description}`)
     }
 
-    // 3. Vote on open proposals
-    const open = this.swarm.getOpenProposals()
-    for (const p of open) {
+    // Vote on open proposals
+    for (const p of this.swarm.getOpenProposals()) {
       if (p.proposer === this.agent.name) continue
       if (p.votes[this.agent.name] !== undefined) continue
 
       const support = this._shouldSupport(p, analysis)
       this.swarm.castVote(p.id, this.agent.name, support, this.agent.reputation)
       events.push({ type: 'vote', agent: this.agent.name, proposalId: p.id, support })
-      this._log(`Voted ${support ? '✅' : '❌'} on proposal #${p.id}: ${p.description}`)
+      this._log(`Voted ${support ? '✅' : '❌'} on proposal #${p.id}`)
     }
 
     return events
   }
 
   _analyse(market, treasury) {
-    const ethPrice   = market.ETH  || 2000
-    const btcPrice   = market.BTC  || 60000
     const volatility = market.volatility || 0.3
-    const tvl        = treasury.totalUSDT || 100000
-
-    const riskScore = volatility > 0.5 ? 'HIGH' : volatility > 0.25 ? 'MEDIUM' : 'LOW'
-    const hedgeRec  = riskScore === 'HIGH' ? 'increase_xaut' : 'hold'
-    const yieldRec  = tvl > 50000 ? 'deploy_aave' : 'hold'
-
-    return { ethPrice, btcPrice, volatility, riskScore, hedgeRec, yieldRec, tvl }
+    const riskScore  = volatility > 0.5 ? 'HIGH' : volatility > 0.25 ? 'MEDIUM' : 'LOW'
+    return {
+      ethPrice:   market.ETH,
+      btcPrice:   market.BTC,
+      xautPrice:  market.XAUT,
+      volatility,
+      riskScore,
+      tvl:        treasury.totalUSDT,
+      personality: this.personality.label,
+    }
   }
 
   _generateProposal(analysis, treasury) {
-    // Pick strategy based on analysis
-    let strategy
-    if (analysis.riskScore === 'HIGH') {
-      strategy = STRATEGIES[2] // hedge XAU₮
-    } else if (analysis.yieldRec === 'deploy_aave') {
-      strategy = STRATEGIES[3] // Aave lending
-    } else {
-      strategy = STRATEGIES[this._cycle % STRATEGIES.length]
-    }
+    const strategies = this.personality.strategies
+    const strategy   = strategies[this._cycle % strategies.length]
 
-    const pct    = [5, 10, 15, 20][Math.floor(Math.random() * 4)]
-    const amount = Math.floor((treasury.totalUSDT || 100000) * pct / 100)
+    // Risk-adjusted allocation size based on personality
+    const basePct = Math.round(this.personality.riskTolerance * 30)
+    const pct     = Math.max(5, basePct + (Math.floor(Math.random() * 10) - 5))
+    const amount  = Math.floor((treasury.totalUSDT || 100000) * pct / 100)
+
+    const riskScore = analysis.riskScore === 'HIGH' && this.personality.riskTolerance < 0.4
+      ? 'LOW'   // conservative agents downgrade risk in volatile markets
+      : analysis.riskScore
 
     return {
-      type:        strategy.type,
-      description: `[${this.agent.name}] ${strategy.desc} (~${pct}% = $${amount.toLocaleString()} USDT)`,
+      type:        'Rebalance',
+      description: `[${this.agent.name} ${this.personality.emoji}] ${strategy} (~${pct}% = $${amount.toLocaleString()} USDT)`,
       amount,
-      riskScore:   analysis.riskScore,
-      rationale:   `ETH=$${analysis.ethPrice}, vol=${(analysis.volatility * 100).toFixed(0)}%, risk=${analysis.riskScore}`,
+      riskScore,
+      rationale:   `${this.personality.label} | ETH=$${analysis.ethPrice}, vol=${(analysis.volatility * 100).toFixed(0)}%, risk=${analysis.riskScore}`,
     }
   }
 
   _shouldSupport(proposal, myAnalysis) {
-    // Support if risk alignment matches and amount is reasonable
-    const isRisky    = proposal.riskScore === 'HIGH'
-    const myRisky    = myAnalysis.riskScore === 'HIGH'
-    const reasonable = proposal.amount <= myAnalysis.tvl * 0.3
+    const amount      = proposal.amount || 0
+    const maxAllowed  = myAnalysis.tvl * (this.personality.riskTolerance * 0.5)
+    const isAffordable = amount <= maxAllowed
 
-    // Agents with high reputation are more conservative
-    const conservative = this.agent.reputation > 1500
+    // Conservative agents reject high-risk proposals in volatile markets
+    if (this.personality.riskTolerance < 0.35 && proposal.riskScore === 'HIGH') return false
 
-    if (!reasonable) return false
-    if (conservative && isRisky && !myRisky) return false
-    return true
+    // Aggressive agents support most proposals
+    if (this.personality.riskTolerance > 0.7) return isAffordable
+
+    return isAffordable && proposal.riskScore !== 'HIGH'
   }
 
   _log(msg) {
     const entry = { ts: Date.now(), agent: this.agent.name, msg }
     this.log.push(entry)
     if (this.log.length > 50) this.log.shift()
-    console.log(`[${this.agent.name}] ${msg}`)
+    console.log(`[${this.agent.name} ${this.personality.emoji}] ${msg}`)
   }
 }
