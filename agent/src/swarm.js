@@ -1,37 +1,31 @@
 import { AgentBrain } from './agentBrain.js'
+import { VaultContract } from './vaultContract.js'
 
-/**
- * SwarmCoordinator – orchestrates all agents, manages proposals,
- * tallies votes, executes approved allocations, tracks treasury state.
- */
 export class SwarmCoordinator {
   constructor() {
-    this.agents    = new Map()   // name → { name, address, reputation, wallet }
-    this.brains    = new Map()   // name → AgentBrain
-    this.proposals = new Map()   // id   → Proposal
-    this.history   = []          // executed allocations
-    this.eventLog  = []          // all swarm events
+    this.agents    = new Map()
+    this.brains    = new Map()
+    this.proposals = new Map()
+    this.history   = []
+    this.eventLog  = []
     this._nextId   = 0
     this._cycle    = 0
+    this.vault     = null   // VaultContract instance (set after bootstrap)
 
-    // Simulated treasury (mirrors on-chain state for demo)
-    this.treasury = {
-      totalUSDT: 100_000,
-      totalXAUT: 0,
-      allocations: [],
-    }
+    this.treasury = { totalUSDT: 100_000, totalXAUT: 0, allocations: [] }
+    this.market   = { ETH: 2450, BTC: 67000, USDT: 1.00, XAUT: 2650, volatility: 0.28 }
 
-    // Simulated market data
-    this.market = {
-      ETH:        2450,
-      BTC:        67000,
-      USDT:       1.00,
-      XAUT:       2650,
-      volatility: 0.28,
-    }
+    // On-chain metadata
+    this.contractAddress = process.env.VAULT_CONTRACT_ADDRESS || null
+    this.network         = 'Sepolia'
+    this.chainId         = 11155111
   }
 
-  // ─── Agent Management ──────────────────────────────────────────────────────
+  // ─── Setup ─────────────────────────────────────────────────────────────────
+
+  setVaultContract(vault) {
+    this.vault = vault
+  }
 
   addAgent(name, address, wallet) {
     const agent = { name, address, reputation: 1000, wallet, joinedAt: Date.now() }
@@ -51,22 +45,52 @@ export class SwarmCoordinator {
     const id = this._nextId++
     const p = {
       id,
-      proposer:    proposerName,
-      type:        proposal.type,
-      description: proposal.description,
-      amount:      proposal.amount,
-      riskScore:   proposal.riskScore,
-      rationale:   proposal.rationale,
-      votes:       {},
-      votesFor:    0,
+      proposer:     proposerName,
+      type:         proposal.type,
+      description:  proposal.description,
+      amount:       proposal.amount,
+      riskScore:    proposal.riskScore,
+      rationale:    proposal.rationale,
+      votes:        {},
+      votesFor:     0,
       votesAgainst: 0,
-      status:      'pending',
-      createdAt:   Date.now(),
-      expiresAt:   Date.now() + 30_000, // 30s voting window in demo
+      status:       'pending',
+      createdAt:    Date.now(),
+      expiresAt:    Date.now() + 30_000,
+      onChainId:    null,
+      txHash:       null,
     }
     this.proposals.set(id, p)
     this._emit('proposal_created', { id, proposer: proposerName, description: p.description })
+
+    // Fire on-chain propose (non-blocking)
+    this._onChainPropose(p, proposerName)
+
     return id
+  }
+
+  async _onChainPropose(p, proposerName) {
+    if (!this.vault) return
+    const writer = this.vault.writer(proposerName)
+    if (!writer) return
+    try {
+      const PTYPE = { Transfer: 0, Rebalance: 1, AgentSlash: 2, ParamChange: 3 }
+      const tx = await writer.propose(
+        PTYPE[p.type] ?? 1,
+        p.description,
+        '0x0000000000000000000000000000000000000000',
+        '0x0000000000000000000000000000000000000000',
+        0,
+        '0x'
+      )
+      const receipt = await tx.wait()
+      p.txHash    = receipt.hash
+      p.onChainId = Number(receipt.logs?.[0]?.topics?.[1] ?? 0)
+      this._emit('proposal_onchain', { id: p.id, txHash: p.txHash, onChainId: p.onChainId })
+      console.log(`📜 Proposal #${p.id} on-chain tx: ${receipt.hash}`)
+    } catch (err) {
+      console.warn(`[onChainPropose] ${err.message?.slice(0, 80)}`)
+    }
   }
 
   castVote(proposalId, voterName, support, weight) {
@@ -79,6 +103,22 @@ export class SwarmCoordinator {
     else         p.votesAgainst += weight
 
     this._emit('vote_cast', { proposalId, voter: voterName, support, weight })
+
+    // Fire on-chain vote (non-blocking)
+    this._onChainVote(p, voterName, support)
+  }
+
+  async _onChainVote(p, voterName, support) {
+    if (!this.vault || p.onChainId === null) return
+    const writer = this.vault.writer(voterName)
+    if (!writer) return
+    try {
+      const tx = await writer.vote(p.onChainId, support)
+      await tx.wait()
+      console.log(`🗳️  ${voterName} voted on-chain for proposal #${p.onChainId}`)
+    } catch (err) {
+      console.warn(`[onChainVote] ${err.message?.slice(0, 80)}`)
+    }
   }
 
   getOpenProposals() {
@@ -109,14 +149,14 @@ export class SwarmCoordinator {
   }
 
   _executeProposal(p) {
-    // Simulate on-chain execution (in production: call OrionVault contract)
     const allocation = {
       proposalId:  p.id,
       description: p.description,
       amount:      p.amount,
       type:        p.type,
       executedAt:  Date.now(),
-      txHash:      '0x' + Math.random().toString(16).slice(2).padEnd(64, '0'),
+      txHash:      p.txHash || ('0x' + Math.random().toString(16).slice(2).padEnd(64, '0')),
+      onChain:     !!p.txHash,
     }
 
     if (p.type === 'Transfer' || p.type === 'Rebalance') {
@@ -128,7 +168,6 @@ export class SwarmCoordinator {
     this.history.push(allocation)
     this._emit('proposal_executed', allocation)
 
-    // Reward proposer
     const proposer = this.agents.get(p.proposer)
     if (proposer) {
       proposer.reputation = Math.min(10000, proposer.reputation + 100)
@@ -149,24 +188,22 @@ export class SwarmCoordinator {
     const allEvents = []
     for (const [name, brain] of this.brains) {
       const agent = this.agents.get(name)
-      // Sync reputation into brain's agent ref
       brain.agent.reputation = agent.reputation
       const events = await brain.tick(this.market, this.treasury)
       allEvents.push(...events)
     }
 
     this._emit('cycle_complete', {
-      cycle:     this._cycle,
-      agents:    this.agents.size,
+      cycle:    this._cycle,
+      agents:   this.agents.size,
       proposals: this.proposals.size,
-      treasury:  this.treasury.totalUSDT,
+      treasury: this.treasury.totalUSDT,
     })
 
     return allEvents
   }
 
   _updateMarket() {
-    // Simulate realistic price drift
     const drift = () => 1 + (Math.random() - 0.5) * 0.04
     this.market.ETH        = +(this.market.ETH  * drift()).toFixed(2)
     this.market.BTC        = +(this.market.BTC  * drift()).toFixed(2)
@@ -180,26 +217,19 @@ export class SwarmCoordinator {
 
   getState() {
     return {
-      cycle:     this._cycle,
+      cycle:           this._cycle,
+      contractAddress: this.contractAddress,
+      network:         this.network,
+      chainId:         this.chainId,
       agents:    [...this.agents.values()].map(a => ({
-        name:       a.name,
-        address:    a.address,
-        reputation: a.reputation,
-        joinedAt:   a.joinedAt,
+        name: a.name, address: a.address, reputation: a.reputation, joinedAt: a.joinedAt,
       })),
       proposals: [...this.proposals.values()].map(p => ({
-        id:          p.id,
-        proposer:    p.proposer,
-        type:        p.type,
-        description: p.description,
-        amount:      p.amount,
-        riskScore:   p.riskScore,
-        rationale:   p.rationale,
-        votesFor:    p.votesFor,
-        votesAgainst: p.votesAgainst,
-        status:      p.status,
-        createdAt:   p.createdAt,
-        expiresAt:   p.expiresAt,
+        id: p.id, proposer: p.proposer, type: p.type, description: p.description,
+        amount: p.amount, riskScore: p.riskScore, rationale: p.rationale,
+        votesFor: p.votesFor, votesAgainst: p.votesAgainst, status: p.status,
+        createdAt: p.createdAt, expiresAt: p.expiresAt,
+        txHash: p.txHash, onChainId: p.onChainId,
       })),
       treasury:  this.treasury,
       market:    this.market,
@@ -207,8 +237,6 @@ export class SwarmCoordinator {
       eventLog:  this.eventLog.slice(-50),
     }
   }
-
-  // ─── Helpers ───────────────────────────────────────────────────────────────
 
   _totalReputation() {
     let total = 0

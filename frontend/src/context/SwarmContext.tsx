@@ -39,6 +39,9 @@ interface Market {
 
 interface SwarmState {
   cycle: number
+  contractAddress?: string
+  network?: string
+  chainId?: number
   agents: Agent[]
   proposals: Proposal[]
   treasury: Treasury

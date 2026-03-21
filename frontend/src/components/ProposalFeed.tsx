@@ -68,6 +68,16 @@ export function ProposalFeed() {
                   style={{ width: `${forPct}%` }}
                 />
               </div>
+              {(p as any).txHash && (
+                <a
+                  href={`https://sepolia.etherscan.io/tx/${(p as any).txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-accent-indigo hover:underline font-mono mt-1 block"
+                >
+                  ⛓ {(p as any).txHash.slice(0, 12)}… ↗
+                </a>
+              )}
             </div>
           </motion.div>
         )

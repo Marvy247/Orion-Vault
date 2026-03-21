@@ -25,6 +25,18 @@ export function Dashboard() {
             <span className={connected ? 'text-emerald-500' : 'text-red-400'}>
               {connected ? '● Live' : '○ Connecting…'}
             </span>
+            {state?.contractAddress && state.contractAddress !== '0x0000000000000000000000000000000000000000' && (
+              <> ·{' '}
+                <a
+                  href={`https://sepolia.etherscan.io/address/${state.contractAddress}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-indigo hover:underline font-mono text-xs"
+                >
+                  {state.contractAddress.slice(0, 8)}…{state.contractAddress.slice(-6)} ↗
+                </a>
+              </>
+            )}
           </p>
         </div>
         <button
