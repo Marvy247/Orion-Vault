@@ -6,9 +6,11 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "mcp": "node src/mcp.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@tetherto/wdk": "^1.0.0-beta.6",
     "@tetherto/wdk-pricing-bitfinex-http": "^1.0.0-beta.2",
     "@tetherto/wdk-wallet": "^1.0.0-beta.6",
@@ -16,6 +18,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "ethers": "^6.16.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "zod": "^4.3.6"
   }
 }

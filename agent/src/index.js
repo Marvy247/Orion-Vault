@@ -100,6 +100,21 @@ app.post('/api/tick', async (_req, res) => {
   res.json({ ok: true, events })
 })
 
+app.post('/api/propose', (req, res) => {
+  const { proposer, type, description, amount } = req.body
+  if (!swarm.agents.has(proposer)) return res.status(400).json({ error: 'Unknown agent' })
+  const id = swarm.submitProposal(proposer, { type, description, amount, riskScore: 'MEDIUM', rationale: 'MCP-submitted' })
+  res.json({ ok: true, proposalId: id })
+})
+
+app.post('/api/vote', (req, res) => {
+  const { proposalId, voter, support } = req.body
+  const agent = swarm.agents.get(voter)
+  if (!agent) return res.status(400).json({ error: 'Unknown agent' })
+  swarm.castVote(proposalId, voter, support, agent.reputation)
+  res.json({ ok: true })
+})
+
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type',  'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')

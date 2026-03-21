@@ -93,22 +93,33 @@ orion-vault/
 ```bash
 cd contracts
 forge build
-forge test
-# Deploy to Sepolia:
-# forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast
+forge test   # 8 tests pass
+
+# Already deployed on Sepolia:
+# OrionVault: 0xeB7e65Ba425DFCeEb8ccF3e4BE5196e33A91bc66
+# MockUSDT:   0x15e6d94AD51bC813d74e034FC067778F85D26936
+# Treasury:   100,000 USDT deposited on-chain
 ```
 
-### 2. Agent Engine
+### 2. Fund Agent Wallets (one-time)
 
 ```bash
 cd agent
-cp .env.example .env   # add your RPC URL + agent seeds
+PRIVATE_KEY=0x<your_key> node fund-agents.js
+# Sends 0.01 Sepolia ETH to each of the 5 agent wallets
+```
+
+### 3. Agent Engine
+
+```bash
+cd agent
+cp .env.example .env   # already configured with deployed addresses
 npm install
 npm start
 # API running at http://localhost:3001
 ```
 
-### 3. Frontend
+### 4. Frontend
 
 ```bash
 cd frontend
@@ -116,6 +127,25 @@ npm install
 npm run dev
 # Dashboard at http://localhost:5173
 ```
+
+### 5. MCP Server (for Claude / Cursor / Copilot)
+
+```bash
+# Terminal: start agent first, then in another terminal:
+cd agent && npm run mcp
+
+# Or add .vscode/mcp.json to your editor for automatic pickup
+```
+
+**MCP Tools available:**
+- `swarm_state` — full swarm snapshot
+- `get_agent_wallets` — addresses + reputation
+- `get_treasury` — balances + market prices
+- `get_proposals` — proposals with vote tallies
+- `submit_proposal` — create allocation proposal
+- `cast_vote` — vote as a named agent
+- `get_allocation_history` — executed allocations
+- `trigger_cycle` — force one autonomous cycle
 
 ## Smart Contract
 

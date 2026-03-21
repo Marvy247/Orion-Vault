@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "orion-vault": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["agent/src/mcp.js"],
+      "env": {
+        "PORT": "3001"
+      }
+    }
+  }
+}
