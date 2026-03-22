@@ -1,6 +1,7 @@
 import { CreditEngine } from './creditEngine.js'
 import { negotiateLoanTerms, generateLoanRequest } from './negotiation.js'
 import { proveCreditScore, verifyProof } from './zkCredit.js'
+import { getAgentDID, issueCredential, getAllDIDs } from './agentDID.js'
 
 const BORROWER_TYPES = ['DeFi Yield Agent', 'Trading Agent', 'Tipping Agent', 'Content Agent', 'Arbitrage Agent']
 
@@ -27,6 +28,12 @@ export class LendingEngine {
     this._cycle    = 0
     this._txCount  = 0
     this._pending  = new Set()   // agent names with in-flight txs
+
+    // Assign W3C DIDs to all agents
+    lender.did = getAgentDID(lender.name, lender.address)
+    for (const b of borrowerAgents) b.did = getAgentDID(b.name, b.address)
+    console.log(`[DID] ${lender.name}: ${lender.did}`)
+    for (const b of borrowerAgents) console.log(`[DID] ${b.name}: ${b.did}`)
   }
 
   // ── Market simulation ──────────────────────────────────────────────────────
@@ -255,6 +262,10 @@ export class LendingEngine {
         loan.status = 'repaid'
         const borrower = this.borrowers.find(b => b.name === loan.borrower)
         if (borrower) borrower.activeLoans = Math.max(0, (borrower.activeLoans || 1) - 1)
+        // Issue Verifiable Credential for completed loan
+        const allLoans = [...this.loans.values()].filter(l => l.borrower === loan.borrower)
+        const vc = issueCredential(loan.borrower, allLoans)
+        if (vc) console.log(`[DID] VC issued for ${loan.borrower}: repayRate=${vc.credentialSubject.creditHistory.repaymentRate}`)
       }
 
       events.push({ type: 'repayment', loanId: id, borrower: loan.borrower, amount: repayAmount, fullRepayment, txHash })
@@ -375,6 +386,7 @@ export class LendingEngine {
       lender:     this.lender,
       borrowers:  this.borrowers,
       loans:      loanList,
+      dids:       getAllDIDs(),
       stats: {
         totalLoans:    loanList.length,
         activeLoans:   loanList.filter(l => l.status === 'active').length,

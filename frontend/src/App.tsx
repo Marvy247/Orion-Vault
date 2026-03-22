@@ -4,6 +4,7 @@ import { AgentPanel } from './components/AgentPanel'
 import { LoanFeed } from './components/LoanFeed'
 import { CreditPanel } from './components/CreditPanel'
 import { EventLog } from './components/EventLog'
+import { DIDPanel } from './components/DIDPanel'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
           <div className="space-y-6">
             <AgentPanel />
             <CreditPanel />
+            <DIDPanel />
           </div>
         </div>
       </div>

@@ -116,8 +116,11 @@ app.get('/api/zk/:borrower', async (req, res) => {
 })
 
 app.get('/api/agents', (_, res) => {
-  if (!engine) return res.json([])
-  res.json([engine.lender, ...engine.borrowers])
+  res.json(engine ? [engine.lender, ...engine.borrowers] : [])
+})
+
+app.get('/api/dids', (_, res) => {
+  res.json(engine ? engine.getState().dids : [])
 })
 
 app.get('/api/market', (_, res) => {
