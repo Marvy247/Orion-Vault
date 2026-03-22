@@ -1,5 +1,5 @@
-import { WDK } from '@tetherto/wdk'
-import { WalletManagerEvm } from '@tetherto/wdk-wallet-evm'
+import WDK from '@tetherto/wdk'
+import WalletManagerEvm from '@tetherto/wdk-wallet-evm'
 
 /**
  * Creates a WDK-backed self-custodial EVM wallet for an agent.
