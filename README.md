@@ -126,8 +126,8 @@ Falls back to CreditEngine defaults if LLM is unavailable — zero downtime.
 
 | Contract | Address |
 |----------|---------|
-| SymbioLend | TBD after deploy |
-| MockUSDT | TBD after deploy |
+| SymbioLend | [0xbde3971085989d183cf3108380ff73ee776ef354](https://sepolia.etherscan.io/address/0xbde3971085989d183cf3108380ff73ee776ef354) |
+| MockUSDT | [0xc07a5690d43c3d9be1d369cb881bbbe17a020acc](https://sepolia.etherscan.io/address/0xc07a5690d43c3d9be1d369cb881bbbe17a020acc) |
 
 ---
 

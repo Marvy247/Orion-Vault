@@ -25,6 +25,7 @@ export class LendingEngine {
     this.market    = { ETH: 3200, BTC: 65000, XAUT: 2400, volatility: 0.3 }
     this._cycle    = 0
     this._txCount  = 0
+    this._pending  = new Set()   // agent names with in-flight txs
   }
 
   // ── Market simulation ──────────────────────────────────────────────────────
@@ -88,16 +89,21 @@ export class LendingEngine {
     // On-chain: request loan (no collateral for undercollateralized demo)
     let loanId = null
     let txHash = null
-    try {
-      const principal = BigInt(amount) * 1_000_000n  // USDT 6 decimals
-      const result = await this.contract.requestLoan(
-        borrower.name, principal, 500, 7 * 24 * 3600, 0n
-      )
-      loanId = result.loanId
-      txHash = result.hash
-      this._txCount++
-    } catch (e) {
-      console.error(`[LendingEngine] requestLoan failed for ${borrower.name}:`, e.message)
+    if (!this._pending.has(borrower.name)) {
+      this._pending.add(borrower.name)
+      try {
+        const principal = BigInt(amount) * 1_000_000n  // USDT 6 decimals
+        const result = await this.contract.requestLoan(
+          borrower.name, principal, 500, 7 * 24 * 3600, 0n
+        )
+        loanId = result.loanId
+        txHash = result.hash
+        this._txCount++
+      } catch (e) {
+        console.error(`[LendingEngine] requestLoan failed for ${borrower.name}:`, e.message.slice(0, 80))
+      } finally {
+        this._pending.delete(borrower.name)
+      }
     }
 
     const loan = {
@@ -164,15 +170,20 @@ export class LendingEngine {
 
       // Fund on-chain
       let txHash = null
-      try {
-        if (typeof id === 'number') {
-          txHash = await this.contract.fundLoan(
-            this.lender.name, id, BigInt(loan.amount) * 1_000_000n, BigInt(terms.durationDays) * 86400n
-          )
-          this._txCount++
+      if (!this._pending.has(this.lender.name)) {
+        this._pending.add(this.lender.name)
+        try {
+          if (typeof id === 'number') {
+            txHash = await this.contract.fundLoan(
+              this.lender.name, id, BigInt(loan.amount) * 1_000_000n, BigInt(terms.durationDays) * 86400n
+            )
+            this._txCount++
+          }
+        } catch (e) {
+          console.error(`[LendingEngine] fundLoan failed:`, e.message.slice(0, 80))
+        } finally {
+          this._pending.delete(this.lender.name)
         }
-      } catch (e) {
-        console.error(`[LendingEngine] fundLoan failed:`, e.message)
       }
 
       loan.status   = 'active'
@@ -205,15 +216,20 @@ export class LendingEngine {
       loan.repaid = (loan.repaid || 0) + repayAmount
 
       let txHash = null
-      try {
-        if (typeof id === 'number') {
-          const owed = await this.contract.totalOwed(id)
-          const paying = owed < BigInt(Math.round(repayAmount * 1_000_000)) ? owed : BigInt(Math.round(repayAmount * 1_000_000))
-          txHash = await this.contract.repay(loan.borrower, id, paying)
-          this._txCount++
+      if (!this._pending.has(loan.borrower)) {
+        this._pending.add(loan.borrower)
+        try {
+          if (typeof id === 'number') {
+            const owed = await this.contract.totalOwed(id)
+            const paying = owed < BigInt(Math.round(repayAmount * 1_000_000)) ? owed : BigInt(Math.round(repayAmount * 1_000_000))
+            txHash = await this.contract.repay(loan.borrower, id, paying)
+            this._txCount++
+          }
+        } catch (e) {
+          console.error(`[LendingEngine] repay failed:`, e.message.slice(0, 80))
+        } finally {
+          this._pending.delete(loan.borrower)
         }
-      } catch (e) {
-        console.error(`[LendingEngine] repay failed:`, e.message)
       }
 
       const fullRepayment = loan.repaid >= loan.amount * 1.05
