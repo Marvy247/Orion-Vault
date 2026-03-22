@@ -224,19 +224,32 @@ export class LendingEngine {
     return events
   }
 
-  // ── Auto-repayment from simulated revenue ──────────────────────────────────
+  // ── Auto-repayment driven by real on-chain USDT balance ───────────────────
 
   async _processRepayments() {
     const events = []
     for (const [id, loan] of this.loans) {
       if (loan.status !== 'active') continue
 
-      // Simulate borrower earning revenue (5–15% of loan per cycle)
-      const earnRate   = 0.05 + Math.random() * 0.10
-      const earned     = Math.floor(loan.amount * earnRate)
-      const repayAmount = Math.min(earned, loan.amount * 1.05 - (loan.repaid || 0))
+      // Check borrower's actual on-chain USDT balance
+      let onChainBalance = 0n
+      try {
+        const borrowerAddr = this.borrowers.find(b => b.name === loan.borrower)?.address
+        if (borrowerAddr) onChainBalance = await this.contract.tokenBalance(borrowerAddr)
+      } catch {}
 
-      if (repayAmount <= 0) continue
+      // Only repay if borrower actually holds USDT on-chain
+      if (onChainBalance === 0n) continue
+
+      const owed = typeof id === 'number'
+        ? await this.contract.totalOwed(id).catch(() => 0n)
+        : BigInt(Math.round(loan.amount * 1.05 * 1_000_000))
+
+      if (owed === 0n) continue
+
+      // Pay whatever they can afford (up to full owed amount)
+      const paying = onChainBalance < owed ? onChainBalance : owed
+      const repayAmount = Number(paying) / 1_000_000
 
       loan.repaid = (loan.repaid || 0) + repayAmount
 
@@ -245,8 +258,6 @@ export class LendingEngine {
         this._pending.add(loan.borrower)
         try {
           if (typeof id === 'number') {
-            const owed = await this.contract.totalOwed(id)
-            const paying = owed < BigInt(Math.round(repayAmount * 1_000_000)) ? owed : BigInt(Math.round(repayAmount * 1_000_000))
             txHash = await this.contract.repay(loan.borrower, id, paying)
             this._txCount++
           }
