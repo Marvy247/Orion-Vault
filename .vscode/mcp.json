@@ -1,12 +1,10 @@
 {
-  "mcpServers": {
-    "orion-vault": {
+  "servers": {
+    "symbiolend": {
       "type": "stdio",
       "command": "node",
       "args": ["agent/src/mcp.js"],
-      "env": {
-        "PORT": "3001"
-      }
+      "cwd": "${workspaceFolder}"
     }
   }
 }
