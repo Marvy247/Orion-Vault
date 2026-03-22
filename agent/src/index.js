@@ -1,145 +1,132 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
-import { AgentWallet } from './agentWallet.js'
-import { SwarmCoordinator } from './swarm.js'
-import { VaultContract } from './vaultContract.js'
+import { createAgentWallet } from './agentWallet.js'
+import { LendingContract } from './lendingContract.js'
+import { LendingEngine } from './lendingEngine.js'
 
 const PORT             = process.env.PORT || 3001
-const RPC_URL          = process.env.RPC_URL || 'https://sepolia.drpc.org'
-const VAULT_ADDRESS    = process.env.VAULT_CONTRACT_ADDRESS
+const RPC_URL          = process.env.RPC_URL || 'https://ethereum-sepolia-rpc.publicnode.com'
+const CONTRACT_ADDRESS = process.env.SYMBIOLEND_ADDRESS
+const TOKEN_ADDRESS    = process.env.USDT_ADDRESS
 
-const AGENTS = [
-  { name: 'Alpha',   seed: process.env.AGENT_ALPHA_SEED   || 'test test test test test test test test test test test junk' },
-  { name: 'Beta',    seed: process.env.AGENT_BETA_SEED    || 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about' },
-  { name: 'Gamma',   seed: process.env.AGENT_GAMMA_SEED   || 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong' },
-  { name: 'Delta',   seed: process.env.AGENT_DELTA_SEED   || 'legal winner thank year wave sausage worth useful legal winner thank yellow' },
-  { name: 'Epsilon', seed: process.env.AGENT_EPSILON_SEED || 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above' },
+// ── Agent seeds ───────────────────────────────────────────────────────────────
+
+const LENDER_SEED = process.env.LENDER_SEED
+const BORROWER_SEEDS = [
+  process.env.BORROWER_1_SEED,
+  process.env.BORROWER_2_SEED,
+  process.env.BORROWER_3_SEED,
+  process.env.BORROWER_4_SEED,
 ]
 
-const swarm   = new SwarmCoordinator()
-const wallets = []
+const BORROWER_NAMES = ['Nexus', 'Flux', 'Orbit', 'Pulse']
+const BORROWER_TYPES = ['DeFi Yield Agent', 'Trading Agent', 'Tipping Agent', 'Arbitrage Agent']
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+let engine = null
+const sseClients = []
 
 async function bootstrap() {
-  console.log('🚀 Orion Vault – Initializing agent swarm...')
-  console.log(`📜 Contract: ${VAULT_ADDRESS || 'not set'}`)
-  console.log(`🌐 Network:  Sepolia (${RPC_URL})`)
+  console.log('\n🔗 SymbioLend – Initializing agent lending protocol...')
 
-  // Init WDK wallets
-  for (const cfg of AGENTS) {
+  const contract = new LendingContract(CONTRACT_ADDRESS, TOKEN_ADDRESS, RPC_URL)
+
+  // Lender agent
+  const lenderWallet = await createAgentWallet(LENDER_SEED, RPC_URL)
+  const lenderAddr   = await lenderWallet.getAddress()
+  contract.addSigner('Lender', lenderWallet)
+  await contract.registerAgent('Lender').catch(() => {})
+
+  const lender = {
+    name:       'Lender',
+    address:    lenderAddr,
+    type:       'Lender Agent',
+    activeLoans: 0,
+  }
+  console.log(`✅ Lender Agent ready at ${lenderAddr}`)
+
+  // Borrower agents
+  const borrowers = []
+  for (let i = 0; i < BORROWER_NAMES.length; i++) {
+    const seed   = BORROWER_SEEDS[i]
+    if (!seed) continue
+    const wallet = await createAgentWallet(seed, RPC_URL)
+    const addr   = await wallet.getAddress()
+    const name   = BORROWER_NAMES[i]
+    contract.addSigner(name, wallet)
+    await contract.registerAgent(name).catch(() => {})
+    borrowers.push({ name, address: addr, type: BORROWER_TYPES[i], activeLoans: 0 })
+    console.log(`✅ Borrower ${name} (${BORROWER_TYPES[i]}) at ${addr}`)
+  }
+
+  engine = new LendingEngine(lender, borrowers, contract)
+  console.log(`\n🌐 Lending engine online — ${borrowers.length} borrower agents\n`)
+
+  // Autonomous loop
+  setInterval(async () => {
     try {
-      const wallet = new AgentWallet(cfg.name, cfg.seed, RPC_URL)
-      await wallet.init()
-      wallets.push(wallet)
-      swarm.addAgent(cfg.name, wallet.address, wallet)
-      console.log(`  ✅ ${cfg.name} → ${wallet.address}`)
+      const events = await engine.tick()
+      for (const e of events) broadcast(e)
     } catch (err) {
-      console.error(`  ❌ Failed to init ${cfg.name}:`, err.message)
+      console.error('[loop]', err.message)
     }
-  }
-
-  // Wire up on-chain contract if address is set
-  if (VAULT_ADDRESS && VAULT_ADDRESS !== '0x0000000000000000000000000000000000000000') {
-    console.log('\n🔗 Connecting to OrionVault on Sepolia...')
-    const vault = new VaultContract(VAULT_ADDRESS, RPC_URL)
-
-    for (const wallet of wallets) {
-      await vault.addSigner(wallet.name, wallet._account)
-    }
-
-    swarm.setVaultContract(vault)
-
-    // Bootstrap agents on-chain (deployer already registered them, but try anyway)
-    const anyWriter = [...vault._writers.values()][0]
-    if (anyWriter) {
-      for (const wallet of wallets) {
-        try {
-          const w = vault.writer(wallet.name)
-          if (w) {
-            const tx = await w.registerAgent(wallet.name)
-            await tx.wait()
-            console.log(`  ⛓  ${wallet.name} registered on-chain`)
-          }
-        } catch {
-          // Already registered — that's fine
-        }
-      }
-    }
-
-    console.log('✅ On-chain integration active\n')
-  } else {
-    console.log('⚠️  Running in simulation mode (no contract address)\n')
-  }
-
-  console.log(`🌌 Swarm online with ${wallets.length} agents`)
-  startAutonomousLoop()
+  }, 10_000)
 }
 
-let loopInterval = null
+// ── SSE broadcast ─────────────────────────────────────────────────────────────
 
-function startAutonomousLoop() {
-  const TICK_MS = 8_000
-  console.log(`⏱  Autonomous loop starting (${TICK_MS / 1000}s cycles)\n`)
-  loopInterval = setInterval(async () => {
-    try { await swarm.tick() } catch (err) { console.error('Tick error:', err.message) }
-  }, TICK_MS)
+function broadcast(event) {
+  const data = `data: ${JSON.stringify(event)}\n\n`
+  for (const res of sseClients) {
+    try { res.write(data) } catch {}
+  }
 }
 
-// ─── API ──────────────────────────────────────────────────────────────────────
+// ── Express API ───────────────────────────────────────────────────────────────
+
 const app = express()
 app.use(cors())
 app.use(express.json())
 
-app.get('/api/state',     (_req, res) => res.json(swarm.getState()))
-app.get('/api/agents',    (_req, res) => res.json(swarm.getState().agents))
-app.get('/api/proposals', (_req, res) => res.json(swarm.getState().proposals))
-app.get('/api/treasury',  (_req, res) => res.json({ treasury: swarm.treasury, market: swarm.market }))
-
-app.post('/api/tick', async (_req, res) => {
-  const events = await swarm.tick()
-  res.json({ ok: true, events })
+app.get('/api/state', (_, res) => {
+  res.json(engine ? engine.getState() : { error: 'initializing' })
 })
 
-app.post('/api/propose', (req, res) => {
-  const { proposer, type, description, amount } = req.body
-  if (!swarm.agents.has(proposer)) return res.status(400).json({ error: 'Unknown agent' })
-  const id = swarm.submitProposal(proposer, { type, description, amount, riskScore: 'MEDIUM', rationale: 'MCP-submitted' })
-  res.json({ ok: true, proposalId: id })
+app.get('/api/loans', (_, res) => {
+  res.json(engine ? [...engine.loans.values()] : [])
 })
 
-app.post('/api/vote', (req, res) => {
-  const { proposalId, voter, support } = req.body
-  const agent = swarm.agents.get(voter)
-  if (!agent) return res.status(400).json({ error: 'Unknown agent' })
-  swarm.castVote(proposalId, voter, support, agent.reputation)
-  res.json({ ok: true })
+app.get('/api/agents', (_, res) => {
+  if (!engine) return res.json([])
+  res.json([engine.lender, ...engine.borrowers])
+})
+
+app.get('/api/market', (_, res) => {
+  res.json(engine ? engine.market : {})
+})
+
+app.post('/api/tick', async (_, res) => {
+  if (!engine) return res.status(503).json({ error: 'initializing' })
+  const events = await engine.tick()
+  for (const e of events) broadcast(e)
+  res.json({ events, state: engine.getState() })
 })
 
 app.get('/api/events', (req, res) => {
-  res.setHeader('Content-Type',  'text/event-stream')
+  res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('Connection',    'keep-alive')
+  res.setHeader('Connection', 'keep-alive')
   res.flushHeaders()
-
-  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
-  send({ type: 'init', data: swarm.getState() })
-
-  const origEmit = swarm._emit.bind(swarm)
-  swarm._emit = (type, data) => {
-    origEmit(type, data)
-    send({ type, data, ts: Date.now() })
-  }
-  req.on('close', () => { swarm._emit = origEmit })
+  sseClients.push(res)
+  req.on('close', () => {
+    const i = sseClients.indexOf(res)
+    if (i !== -1) sseClients.splice(i, 1)
+  })
 })
 
-app.listen(PORT, async () => {
-  console.log(`\n🔭 Orion Vault API → http://localhost:${PORT}`)
-  await bootstrap()
-})
-
-process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down...')
-  if (loopInterval) clearInterval(loopInterval)
-  wallets.forEach(w => w.dispose())
-  process.exit(0)
+app.listen(PORT, () => {
+  console.log(`🔭 SymbioLend API → http://localhost:${PORT}`)
+  bootstrap().catch(console.error)
 })
